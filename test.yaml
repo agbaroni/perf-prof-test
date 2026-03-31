@@ -19,7 +19,7 @@ spec:
           type: Unconfined
       # oc adm policy add-scc-to-user privileged -z agb -n rt-test
       serviceAccount: agb
-      runtimeClassName: performance-worker-rt
+      # runtimeClassName: performance-worker-rt  <== it's not useful!
       containers:
         - name: tester
           securityContext:
@@ -118,8 +118,8 @@ spec:
               python3 /tmp/procgen-app-pin2.py Cpus_allowed_list 0-5
           resources:
             limits:
-              cpu: '2'
+              cpu: '0.5'
               memory: 256Mi
             requests:
-              cpu: '2'
+              cpu: '0.5'
               memory: 256Mi
