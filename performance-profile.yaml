@@ -1,0 +1,23 @@
+apiVersion: performance.openshift.io/v2
+kind: PerformanceProfile
+metadata:
+  name: worker-rt
+spec:
+  cpu:
+    balanceIsolated: false
+    isolated: 0-3
+    reserved: 6-7
+    shared: 4-5
+  globallyDisableIrqLoadBalancing: true
+  kernelPageSize: 4k
+  machineConfigPoolSelector:
+    machineconfiguration.openshift.io/role: worker-rt
+  nodeSelector:
+    node-role.kubernetes.io/worker-rt: ''
+  numa:
+    topologyPolicy: single-numa-node
+  realTimeKernel:
+    enabled: true
+  workloadHints:
+    highPowerConsumption: true
+    realTime: true
