@@ -1,0 +1,125 @@
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: cpu-app-pin-test2
+  namespace: rt-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cpu-app-pin-test2
+  template:
+    metadata:
+      labels:
+        app: cpu-app-pin-test2
+    spec:
+      securityContext:
+        runAsUser: 0
+        seccompProfile:
+          type: Unconfined
+      # oc adm policy add-scc-to-user privileged -z agb -n rt-test
+      serviceAccount: agb
+      runtimeClassName: performance-worker-rt
+      containers:
+        - name: tester
+          securityContext:
+            allowPrivilegeEscalation: true
+            privileged: true
+            capabilities:
+              add:
+                - ALL
+          image: registry.redhat.io/ubi9/toolbox
+          command:
+            - /bin/sh
+            - '-c'
+            - |
+              # --- SCRIPT PYTHON: 20 processi CPU-bound REALI ---
+              cat << 'EOF' > /tmp/procgen-app-pin2.py
+              import multiprocessing as mp
+              import math
+              import time
+              import os
+              import sys
+              import random
+
+              print(sys.argv)
+
+              cpusLst = list(map(lambda x: int(x), sys.argv[2].split('-')))
+              print(f'Cpus: {cpusLst}')
+
+              cpus = [x for x in range(cpusLst[0], cpusLst[1]+1)]
+
+              def worker():
+                  x = 0.0001
+                  while True:
+                      x = math.sqrt(x * x + 1.2345)  # CPU-bound reale
+                      time.sleep(2)
+
+              if __name__ == "__main__":
+                  procs = []
+                  num_proc = 20
+                  half = num_proc // 2
+
+                  for i in range(num_proc):
+                      p = mp.Process(target=worker)
+                      p.start()
+
+                      pid = p.pid
+
+                      for tid in map(int, os.listdir(f'/proc/{pid}/task/')):
+                        # Imposta affinity per metà dei processi
+                        if i < half:
+                            try:
+                                random.shuffle(cpus)
+                                os.sched_setaffinity(tid, cpus)
+                                print(f"Processo {p.pid} vincolato al core {cpus[0]}")
+                            except AttributeError:
+                                print("sched_setaffinity non supportato su questo OS")
+                            except OSError as e:
+                                print("errore os {e}")
+
+                      procs.append(p)
+
+                  print("Creati 20 processi CPU-bound REALI")
+                  for p in procs:
+                      p.join()
+              EOF
+
+              # --- MONITOR CON COLONNE ALLINEATE ---
+              cat << 'EOF' > /tmp/monitor.sh
+              #!/bin/sh
+
+              INTERVAL=1
+
+              while true; do
+                echo "=== $(date) ==="
+
+                echo "--- Affinità CPU del processo ---"
+                grep Cpus_allowed_list /proc/self/status
+                echo
+
+                echo "--- Processi e thread ---"
+                printf "%-6s %-6s %-4s %-5s %-4s %-3s %s\n" "PID" "TID" "PSR" "%CPU" "PRI" "NI" "COMMAND"
+
+                ps -eLo pid,tid,psr,pcpu,pri,ni,args --sort=pid \
+                  | tail -n +2 \
+                  | while read NCPU PID TID PSR CPU PRI NI CMD; do
+                      printf "%-6s %-6s %-4s %-5s %-4s %-3s %s\n" "$PID" "$TID" "$PSR" "$CPU" "$PRI" "$NI" "$CMD"
+                    done
+
+                echo
+                sleep "$INTERVAL"
+              done
+              EOF
+
+              chmod +x /tmp/monitor.sh
+
+              /tmp/monitor.sh &
+              python3 /tmp/procgen-app-pin2.py Cpus_allowed_list 0-5
+          resources:
+            limits:
+              cpu: '2'
+              memory: 256Mi
+            requests:
+              cpu: '2'
+              memory: 256Mi
